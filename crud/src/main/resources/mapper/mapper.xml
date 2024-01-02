@@ -1,0 +1,339 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper
+  PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+  "https://mybatis.org/dtd/mybatis-3-mapper.dtd">  
+  <mapper namespace="mapper">
+  	<update id="proxyCheck">
+  		update b_emp set
+  			PROXY_NO = 0
+  		where
+  			<![CDATA[
+  			PROXY_TIME < TO_DATE(#{local}, 'YYYY-MM-DD HH24:MI:SS')
+  			]]>
+  	</update>
+  	
+  	<update id="proxyApply">
+  		update b_emp set
+  			PROXY_NO = #{proxyNo},
+  			PROXY_TIME = TO_DATE(#{proxyTime}, 'YYYY-MM-DD HH24:MI:SS')
+  		where
+  			MEM_NO = #{memNo}
+  	</update>
+  	
+  	<select id="proxySet" resultMap="member">
+  		select
+  			MEM_NAME,
+            MEM_RANK,
+            MEM_NO
+        from
+        	b_emp
+        where
+        	MEM_NO = #{memNo}
+  	</select>
+  
+  	<resultMap type="map" id="member">
+  		<result column="MEM_NAME" property="memName"/>
+  		<result column="MEM_NO" property="memNo"/>
+  		<result column="MEM_RANK" property="memRank"/>
+  		<result column="PROXY_NO" property="proxyNo"/>
+  	</resultMap>
+  	<select id="proxy" resultMap="member" parameterType="String">
+  		select
+  			MEM_NAME,
+            MEM_NO
+  		from
+  			b_emp
+  		where 1=1
+  			and (PROXY_NO is null or PROXY_NO = 0)
+  			<choose>
+  				<when test="'manager' == _parameter">
+	  				and ('employee' = MEM_RANK or 'assistant' = MEM_RANK)
+	  			</when>
+	  			<when test="'general' == _parameter">
+	  				and ('assistant' = MEM_RANK or 'manager' = MEM_RANK)
+	  			</when>
+  			</choose>
+  	</select>
+  
+  	<select id="getSeqs" resultType="Integer">
+  		select
+  			a.SEQ
+		from
+			b_approval a inner join b_history b on a.SEQ = b.SEQ
+            left outer join b_emp c on a.MEM_NO = c.MEM_NO
+            left outer join b_emp d on b.MEM_NO = d.MEM_NO
+            left outer join b_emp e on b.PROXY_NO = e.MEM_NO
+		where 1=1
+			and b.USE != 'C'
+			and (a.mem_no = #{memNo} or b.mem_no = #{memNo} or b.PROXY_NO = #{memNo})
+			<if test="'manager' == memRank">
+	  			or ('wait' = b.STATE and b.USE = 'Y')
+	  		</if>
+	  		<if test="'general' == memRank">
+	  			or ('decide' = b.STATE or 'complete' = b.STATE or 'refuse' = b.STATE and b.USE = 'Y')
+	  		</if>
+	  		<if test="'manager' == proxyRank">
+	  			or (('wait' = b.STATE and b.USE = 'Y')
+	  			and (a.REG_DATE >= TO_DATE(#{proxyTime}, 'YYYY-MM-DD HH24:MI:SS') 
+	  			or b.UPT_DATE >= TO_DATE(#{proxyTime}, 'YYYY-MM-DD HH24:MI:SS')))
+	  			
+	  		</if>
+			<if test="'general' == proxyRank">
+	  			or (('decide' = b.STATE or 'complete' = b.STATE or 'refuse' = b.STATE and b.USE = 'Y')
+	  			and (a.REG_DATE >= TO_DATE(#{proxyTime}, 'YYYY-MM-DD HH24:MI:SS') 
+	  			or b.UPT_DATE >= TO_DATE(#{proxyTime}, 'YYYY-MM-DD HH24:MI:SS')))
+	  		</if>
+  	</select>
+  
+  	<select id="hisList" resultMap="history">
+  		select
+  			a.HIS_SEQ,
+  			TO_CHAR(a.UPT_DATE, 'YYYY-MM-DD') AS UPT_DATE,
+			b.MEM_NAME,
+			case
+				when a.STATE = 'temporary' then '임시저장'
+				when a.STATE = 'wait' then '결재대기'
+				when a.STATE = 'decide' then '결재중'
+				when a.STATE = 'complete' then '결재완료'
+				when a.STATE = 'refuse' then '반려'
+			end as STATE,
+			a.SEQ,
+            c.MEM_NAME as PROXY_NAME,
+            TO_CHAR(d.REG_DATE, 'YYYY-MM-DD') AS REG_DATE,
+            e.MEM_NAME as WRI_NAME
+		from
+			b_history a left outer join b_emp b on a.MEM_NO = b.MEM_NO
+            left outer join b_emp c on a.PROXY_NO = c.MEM_NO
+            inner join b_approval d on a.SEQ = d.SEQ
+            inner join b_emp e on d.MEM_NO = e.MEM_NO
+		where
+			a.SEQ = #{loadSeq}
+		order by
+			HIS_SEQ desc
+  	</select>
+  	<resultMap type="map" id="history">
+  		<result column="HIS_SEQ" property="hisSeq"/>
+  		<result column="UPT_DATE" property="uptDate"/>
+  		<result column="MEM_NAME" property="memName"/>
+  		<result column="MEM_NO" property="memNo"/>
+  		<result column="STATE" property="state"/>
+  		<result column="SEQ" property="seq"/>
+  		<result column="PROXY_NAME" property="proxyName"/>
+  		<result column="REG_DATE" property="regDate"/>
+  		<result column="WRI_NAME" property="wriName"/>
+  	</resultMap>
+  	
+  	<select id="detailApproval" resultMap="approval">
+  		select
+  			SEQ,
+  			MEM_NO,
+			(select MEM_NAME from b_emp where b_emp.MEM_NO = b_approval.MEM_NO) MEM_NAME,
+			SUBJECT,
+			REG_DATE,
+			CONTENT,
+			(select STATE from b_history where HIS_SEQ = (select max(HIS_SEQ) from b_history where SEQ = #{loadSeq})) STATE
+		from
+			b_approval
+		where
+			SEQ = #{loadSeq}
+  	</select>
+  
+  	<select id="memInfo" resultMap="mem">
+  		select
+  			a.MEM_ID,
+			a.MEM_PW,
+			a.MEM_NAME,
+			a.MEM_NO,
+			a.MEM_RANK,
+			a.PROXY_TIME,
+			b.MEM_RANK as PROXY_RANK
+		from
+			b_emp a left outer join b_emp b on a.PROXY_NO = b.MEM_NO
+		where
+			a.MEM_NO = #{memNo}
+  	</select>
+ 
+ 	<sql id="appName">
+ 		(select MEM_NAME from b_emp a inner join b_history b on a.mem_no = b.mem_no where b.USE = 'Y')
+ 	</sql>
+  	<select id="listApproval" resultMap="approval">
+  		select
+  			a.SEQ,
+			c.MEM_NAME,
+			a.SUBJECT,
+			TO_CHAR(a.REG_DATE, 'YYYY.MM.DD') AS REG_DATE,
+			a.CONTENT,
+			case
+				when b.STATE = 'temporary' then '임시저장'
+				when b.STATE = 'wait' then '결재대기'
+				when b.STATE = 'decide' then '결재중'
+				when b.STATE = 'complete' then '결재완료'
+				when b.STATE = 'refuse' then '반려'
+			end as STATE,
+			d.MEM_NAME as APP_NAME,
+			TO_CHAR(b.UPT_DATE, 'YYYY.MM.DD') AS UPT_DATE,
+			e.MEM_NAME as PROXY_NAME
+		from
+			b_approval a inner join b_history b on a.SEQ = b.SEQ
+            left outer join b_emp c on a.MEM_NO = c.MEM_NO
+            left outer join b_emp d on b.MEM_NO = d.MEM_NO
+            left outer join b_emp e on b.PROXY_NO = e.MEM_NO
+		where 1=1
+			and b.USE = 'Y'
+			<choose>
+				<when test="list.isEmpty()">
+					and 1=0
+				</when>
+				<otherwise>
+					and a.SEQ in
+					<foreach item="item" index="index" collection="list" open="(" separator="," close=")">
+				        #{item}
+				  	</foreach>
+				</otherwise>
+			</choose>
+			<!-- 검색 조건 -->
+	  		<if test="STATE != null and STATE != '' and STATE != 'none'">
+	  			and b.STATE = #{STATE}
+	  		</if>
+	  		<if test="selText != null and sel != null and sel != '' and sel != 'none'">
+	  			<choose>
+					<when test="sel == 'APP_NAME'">
+						and (d.MEM_NAME like '%' || #{selText} || '%' or e.MEM_NAME like '%' || #{selText} || '%')
+					</when>
+					<when test="sel == 'MEM_NAME'">
+						and c.MEM_NAME like '%' || #{selText} || '%'
+					</when>
+					<otherwise>
+						and ${sel} like '%' || #{selText} || '%'
+					</otherwise>
+				</choose>
+	  		</if>
+	  		<if test="stDate != '' and stDate != null and endDate != '' and endDate != null">
+	  			<!-- and a.REG_DATE between TO_DATE(#{stDate}, 'YYYY-MM-DD HH24:MI:SS') and TO_DATE(#{endDate}, 'YYYY-MM-DD HH24:MI:SS') -->
+	  			and to_char(a.REG_DATE, 'yyyy-MM-dd') between #{stDate} and #{endDate}
+	  		</if>
+		order by b.HIS_SEQ desc
+				
+  	</select>
+  	<resultMap type="map" id="approval">
+  		<result column="SEQ" property="seq"/>
+  		<result column="MEM_NO" property="memNo"/>
+  		<result column="MEM_NAME" property="memName"/>
+  		<result column="SUBJECT" property="subject"/>
+  		<result column="REG_DATE" property="regDate"/>
+  		<result column="CONTENT" property="content"/>
+  		<result column="STATE" property="state"/>
+  		<result column="APP_NAME" property="appName"/>
+  		<result column="UPT_DATE" property="uptDate"/>
+  		<result column="PROXY_NAME" property="proxyName"/>
+  	</resultMap>
+  	
+  	<select id="hisState" resultType="String">
+  		select 
+  			STATE 
+  		from 
+  			b_history
+  		where
+  			HIS_SEQ = (<include refid="getHis"></include>)
+  	</select>
+  	
+  	<sql id="getHis">
+  		select max(HIS_SEQ) from b_history where SEQ = #{seq}
+  	</sql>
+  	<insert id="signApproval">
+  		insert into b_approval(
+  			SEQ,
+			MEM_NO,
+			SUBJECT,
+			REG_DATE,
+			CONTENT)
+		VALUES(
+			#{seq},
+			#{memNo},
+			#{subject},
+			TO_DATE(#{regDate}, 'YYYY-MM-DD HH24:MI:SS'),
+			#{content})
+  	</insert>
+  	<update id="updateApp">
+  		update 
+  			b_approval 
+  		set
+  			SUBJECT = #{subject},
+			CONTENT = #{content}
+  		where
+  			SEQ = #{seq}
+  	</update>
+  	<update id="hisRefuse">
+  		update b_history set
+  					USE = 'C'
+  				where
+  					SEQ = #{seq}
+  	</update>
+  	<update id="hisUse">
+  		update 
+  			b_history 
+  		set
+  			USE = 'N'
+  		where
+  			HIS_SEQ = (<include refid="getHis"></include>)
+  	</update>
+  	<insert id="history">
+  		insert into b_history(
+  			HIS_SEQ,
+  			UPT_DATE,
+			MEM_NO,
+			STATE,
+			SEQ,
+			USE,
+			PROXY_NO)
+		VALUES(
+			#{hisSeq},
+			#{uptDate, jdbcType=DATE},
+			#{appNo, jdbcType=INTEGER},
+			#{state},
+			#{seq},
+			'Y',
+			#{proxyNo, jdbcType=INTEGER})
+  	</insert>
+  	
+  	<select id="highHis" resultType="Integer">
+  		select
+  			max(HIS_SEQ) + 1
+		from 
+			b_history
+  	</select>
+  	<select id="highSeq" resultType="Integer">
+  		select
+  			max(SEQ) + 1
+		from b_approval
+  	</select>
+  
+  	<select id="login" resultMap="mem">
+  		select
+  			a.MEM_ID,
+			a.MEM_PW,
+			a.MEM_NAME,
+			a.MEM_NO,
+			a.MEM_RANK,
+			a.PROXY_NO,
+			a.PROXY_TIME,
+            b.MEM_NAME as PROXY_NAME,
+			b.MEM_RANK as PROXY_RANK
+		from
+			b_emp a left outer join b_emp b on a.PROXY_NO = b.MEM_NO
+		where
+			a.MEM_ID = #{memId}
+  	</select>
+  	<resultMap type="map" id="mem">
+  		<result column="MEM_ID" property="memId"/>
+  		<result column="MEM_PW" property="memPw"/>
+  		<result column="MEM_NAME" property="memName"/>
+  		<result column="MEM_NO" property="memNo"/>
+  		<result column="MEM_RANK" property="memRank"/>
+  		<result column="PROXY_NO" property="proxyNo"/>
+  		<result column="PROXY_TIME" property="proxyTime"/>
+  		<result column="PROXY_NAME" property="proxyName"/>
+  		<result column="PROXY_RANK" property="proxyRank"/>
+  	</resultMap>
+  	
+  </mapper>
